@@ -25,14 +25,28 @@ server and the agent are two front-ends onto it.
 Read live state (tempo, transport, mixer, pattern) and control: **tempo**,
 **transport** (arm record / play / stop), **mixer** volume + pan + mute, **channel**
 volumes, and the **step sequencer** (program beats cell-by-cell), plus pattern
-selection. So *"make a 90 BPM boom-bap beat on channels 0 and 1, then arm
-recording"* becomes a sequence of tool calls.
+selection.
 
-> **Honest scope:** FL Studio's controller API is control-oriented, not full
-> project authoring — StudioKit drives a project you've set up (channels/instruments
-> loaded). It programs steps, mixes, and runs transport; it can't instantiate
-> plugins or draw piano-roll melodies from scratch. Great for beat-making,
-> mixing, and hands-free recording.
+**Plays real notes (new):** a built-in **theory engine + MIDI player** lets Claude
+*play* chords, progressions, melodies, and drum patterns into FL — so *"play an
+80 BPM lofi ii–V–I in F minor and record it"* actually performs the notes into the
+piano roll. (`play_chord`, `play_progression`, `play_melody`, `play_drums`, plus
+`get_chord`/`get_scale` for reasoning.)
+
+> **Scope:** StudioKit drives a project you've set up (channels/instruments loaded).
+> It programs steps, mixes, runs transport, and now plays MIDI in — but it can't
+> instantiate plugins for you. Great for beat-making, composing, mixing, and
+> hands-free recording.
+
+### Note playback setup (one time)
+
+Claude plays notes through a **virtual MIDI port** that FL records:
+1. Install [loopMIDI](https://www.tobias-erichsen.de/software/loopmidi.html) and
+   create a port (any name; StudioKit matches `loopMIDI` by default — override with
+   `STUDIOKIT_MIDI_PORT`).
+2. In FL: **Options → MIDI Settings**, select that port under **Input** and click
+   **Enable**.
+3. Arm recording on the target channel before asking Claude to play.
 
 ## Setup
 

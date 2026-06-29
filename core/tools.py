@@ -8,6 +8,19 @@ handlers are the single source of truth for what StudioKit can do to FL Studio.
 from __future__ import annotations
 
 from core.bridge import FLBridge
+from core import theory
+from core.midi import MidiPlayer
+from config import MIDI_PORT
+
+# One shared MIDI player; opens the port lazily per play() call.
+_player = MidiPlayer(MIDI_PORT)
+
+
+def _bpm(bridge: FLBridge, override) -> float:
+    if override:
+        return float(override)
+    s = bridge.state().get("transport", {})
+    return float(s.get("bpm") or 120.0)
 
 
 def _fmt_status(s: dict) -> str:
@@ -86,6 +99,70 @@ def select_pattern(bridge: FLBridge, pattern: int) -> str:
     return f"Selected pattern {pattern}."
 
 
+# --- MIDI playback + theory (plays into FL via the virtual port) -------------
+
+def list_midi_ports(bridge: FLBridge) -> str:
+    ports = _player.ports()
+    if not ports:
+        return ("No MIDI output ports found. Install loopMIDI, create a port, and "
+                "enable it as a MIDI input in FL Studio.")
+    return "MIDI output ports:\n" + "\n".join(f"  - {p}" for p in ports)
+
+
+def get_chord(bridge: FLBridge, root: str, quality: str = "maj", octave: int = 4) -> str:
+    notes = theory.chord_notes(root, quality, octave)
+    return f"{root}{quality}: " + ", ".join(theory.num_name(n) for n in notes)
+
+
+def get_scale(bridge: FLBridge, root: str, name: str = "major", octave: int = 4) -> str:
+    notes = theory.scale_notes(root, name, octave)
+    return f"{root} {name}: " + ", ".join(theory.num_name(n) for n in notes)
+
+
+def play_chord(bridge: FLBridge, root: str, quality: str = "maj", octave: int = 4,
+               beats: float = 2.0, bpm: float | None = None, channel: int = 0) -> str:
+    notes = theory.chord_notes(root, quality, octave)
+    events = theory.chord_events(notes, 0.0, float(beats))
+    return _player.play(events, _bpm(bridge, bpm), channel)
+
+
+def play_progression(bridge: FLBridge, key: str, chords: list, minor: bool = False,
+                     octave: int = 4, beats_per_chord: float = 2.0,
+                     bpm: float | None = None, channel: int = 0) -> str:
+    """chords as roman numerals (['i','iv','v','i']) or [root, quality] pairs."""
+    events = []
+    t = 0.0
+    for c in chords:
+        if isinstance(c, str):
+            root, qual = theory.progression(key, [c], minor=minor, octave=octave)[0]
+        else:
+            root, qual = c[0], c[1]
+        events += theory.chord_events(theory.chord_notes(root, qual, octave),
+                                      t, float(beats_per_chord))
+        t += float(beats_per_chord)
+    return _player.play(events, _bpm(bridge, bpm), channel)
+
+
+def play_melody(bridge: FLBridge, notes: list, bpm: float | None = None,
+                channel: int = 0) -> str:
+    """notes as [name, beats] pairs played in sequence, e.g. [['C4',1],['E4',0.5]].
+    Use 'rest' (or '') as the name for a rest."""
+    events = []
+    t = 0.0
+    for item in notes:
+        name, beats = item[0], float(item[1])
+        if name and name.lower() != "rest":
+            events.append((theory.note_num(name), t, beats, 95))
+        t += beats
+    return _player.play(events, _bpm(bridge, bpm), channel)
+
+
+def play_drums(bridge: FLBridge, pattern: str, bars: int = 1,
+               bpm: float | None = None, channel: int = 0) -> str:
+    events = theory.drum_events(pattern, int(bars))
+    return _player.play(events, _bpm(bridge, bpm), channel)
+
+
 # name -> handler
 _HANDLERS = {
     "get_status": get_status,
@@ -99,6 +176,13 @@ _HANDLERS = {
     "program_step": program_step,
     "clear_channel_steps": clear_channel_steps,
     "select_pattern": select_pattern,
+    "list_midi_ports": list_midi_ports,
+    "get_chord": get_chord,
+    "get_scale": get_scale,
+    "play_chord": play_chord,
+    "play_progression": play_progression,
+    "play_melody": play_melody,
+    "play_drums": play_drums,
 }
 
 # JSON-schema specs for Claude's tool-use API. Kept next to the handlers so the
@@ -152,6 +236,43 @@ TOOLS = [
     {"name": "select_pattern",
      "description": "Jump to a pattern by index.",
      "input_schema": {"type": "object", "properties": {"pattern": {"type": "integer"}}, "required": ["pattern"]}},
+    {"name": "list_midi_ports",
+     "description": "List virtual MIDI output ports. Use this if note playback fails — FL must listen to the matched port as a MIDI input.",
+     "input_schema": {"type": "object", "properties": {}, "required": []}},
+    {"name": "get_chord",
+     "description": "Get the note names of a chord without playing it (for reasoning). quality e.g. maj, min, min7, maj7, 7, sus4, add9.",
+     "input_schema": {"type": "object", "properties": {
+         "root": {"type": "string"}, "quality": {"type": "string"}, "octave": {"type": "integer"}},
+      "required": ["root"]}},
+    {"name": "get_scale",
+     "description": "Get the notes of a scale (major, minor, dorian, pentatonic_minor, blues, ...).",
+     "input_schema": {"type": "object", "properties": {
+         "root": {"type": "string"}, "name": {"type": "string"}, "octave": {"type": "integer"}},
+      "required": ["root"]}},
+    {"name": "play_chord",
+     "description": "PLAY a chord into FL (arm recording on a channel first). quality e.g. min7. beats = how long to hold.",
+     "input_schema": {"type": "object", "properties": {
+         "root": {"type": "string"}, "quality": {"type": "string"}, "octave": {"type": "integer"},
+         "beats": {"type": "number"}, "bpm": {"type": "number"}, "channel": {"type": "integer"}},
+      "required": ["root"]}},
+    {"name": "play_progression",
+     "description": "PLAY a chord progression. chords = roman numerals like ['i','iv','v','i'] in the given key (set minor=true for a minor key), or [root,quality] pairs like [['F','min7'],['Bb','maj7']]. Arm recording first.",
+     "input_schema": {"type": "object", "properties": {
+         "key": {"type": "string"}, "chords": {"type": "array"},
+         "minor": {"type": "boolean"}, "octave": {"type": "integer"},
+         "beats_per_chord": {"type": "number"}, "bpm": {"type": "number"}, "channel": {"type": "integer"}},
+      "required": ["key", "chords"]}},
+    {"name": "play_melody",
+     "description": "PLAY a melody. notes = [name, beats] pairs in sequence, e.g. [['C4',1],['E4',0.5],['rest',0.5],['G4',1]]. Use 'rest' for silence. Arm recording first.",
+     "input_schema": {"type": "object", "properties": {
+         "notes": {"type": "array"}, "bpm": {"type": "number"}, "channel": {"type": "integer"}},
+      "required": ["notes"]}},
+    {"name": "play_drums",
+     "description": "PLAY a drum pattern via MIDI (boom_bap, trap, house, rock) for N bars. Arm recording on a drum channel first.",
+     "input_schema": {"type": "object", "properties": {
+         "pattern": {"type": "string"}, "bars": {"type": "integer"},
+         "bpm": {"type": "number"}, "channel": {"type": "integer"}},
+      "required": ["pattern"]}},
 ]
 
 

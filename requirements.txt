@@ -1,4 +1,7 @@
 # StudioKit
 anthropic>=0.40      # standalone agent (agent.py)
 mcp>=1.2             # MCP server / FastMCP (mcp_server.py)
+mido>=1.3            # MIDI note playback into FL (play_chord/melody/drums)
+python-rtmidi>=1.5   # MIDI backend for mido
 # The FL Studio device script (fl_script/) runs inside FL's own Python — no deps.
+# Note playback also needs loopMIDI (a virtual MIDI port) enabled as an FL input.

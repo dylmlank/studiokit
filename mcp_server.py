@@ -89,5 +89,50 @@ def select_pattern(pattern: int) -> str:
     return T.select_pattern(bridge, pattern)
 
 
+@mcp.tool()
+def list_midi_ports() -> str:
+    """List virtual MIDI output ports (FL must listen to the matched one)."""
+    return T.list_midi_ports(bridge)
+
+
+@mcp.tool()
+def get_chord(root: str, quality: str = "maj", octave: int = 4) -> str:
+    """Get a chord's note names without playing it."""
+    return T.get_chord(bridge, root, quality, octave)
+
+
+@mcp.tool()
+def get_scale(root: str, name: str = "major", octave: int = 4) -> str:
+    """Get a scale's notes (major, minor, dorian, pentatonic_minor, blues, ...)."""
+    return T.get_scale(bridge, root, name, octave)
+
+
+@mcp.tool()
+def play_chord(root: str, quality: str = "maj", octave: int = 4,
+               beats: float = 2.0, bpm: float = 0, channel: int = 0) -> str:
+    """PLAY a chord into FL (arm recording first). bpm=0 uses the project tempo."""
+    return T.play_chord(bridge, root, quality, octave, beats, bpm or None, channel)
+
+
+@mcp.tool()
+def play_progression(key: str, chords: list, minor: bool = False, octave: int = 4,
+                     beats_per_chord: float = 2.0, bpm: float = 0, channel: int = 0) -> str:
+    """PLAY a chord progression — roman numerals (['i','iv','v','i']) or [root,quality] pairs."""
+    return T.play_progression(bridge, key, chords, minor, octave, beats_per_chord,
+                              bpm or None, channel)
+
+
+@mcp.tool()
+def play_melody(notes: list, bpm: float = 0, channel: int = 0) -> str:
+    """PLAY a melody — [name, beats] pairs, e.g. [['C4',1],['E4',0.5]] ('rest' = silence)."""
+    return T.play_melody(bridge, notes, bpm or None, channel)
+
+
+@mcp.tool()
+def play_drums(pattern: str, bars: int = 1, bpm: float = 0, channel: int = 0) -> str:
+    """PLAY a drum pattern (boom_bap, trap, house, rock) for N bars. Arm recording first."""
+    return T.play_drums(bridge, pattern, bars, bpm or None, channel)
+
+
 if __name__ == "__main__":
     mcp.run()
