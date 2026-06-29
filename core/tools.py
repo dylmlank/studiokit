@@ -122,32 +122,43 @@ def get_scale(bridge: FLBridge, root: str, name: str = "major", octave: int = 4)
     return f"{root} {name}: " + ", ".join(theory.num_name(n) for n in notes)
 
 
+def _maybe_humanize(events, amount):
+    return theory.humanize(events, float(amount)) if amount else events
+
+
+def _resolve_chord(key, c, minor, octave):
+    """A progression item -> (root_name, quality). Item is a roman numeral string
+    or a [root, quality] pair."""
+    if isinstance(c, str):
+        return theory.progression(key, [c], minor=minor, octave=octave)[0]
+    return c[0], c[1]
+
+
 def play_chord(bridge: FLBridge, root: str, quality: str = "maj", octave: int = 4,
-               beats: float = 2.0, bpm: float | None = None, channel: int = 0) -> str:
+               beats: float = 2.0, bpm: float | None = None, channel: int = 0,
+               humanize: float = 0.0) -> str:
     notes = theory.chord_notes(root, quality, octave)
     events = theory.chord_events(notes, 0.0, float(beats))
-    return _player.play(events, _bpm(bridge, bpm), channel)
+    return _player.play(_maybe_humanize(events, humanize), _bpm(bridge, bpm), channel)
 
 
 def play_progression(bridge: FLBridge, key: str, chords: list, minor: bool = False,
                      octave: int = 4, beats_per_chord: float = 2.0,
-                     bpm: float | None = None, channel: int = 0) -> str:
+                     bpm: float | None = None, channel: int = 0,
+                     humanize: float = 0.0) -> str:
     """chords as roman numerals (['i','iv','v','i']) or [root, quality] pairs."""
     events = []
     t = 0.0
     for c in chords:
-        if isinstance(c, str):
-            root, qual = theory.progression(key, [c], minor=minor, octave=octave)[0]
-        else:
-            root, qual = c[0], c[1]
+        root, qual = _resolve_chord(key, c, minor, octave)
         events += theory.chord_events(theory.chord_notes(root, qual, octave),
                                       t, float(beats_per_chord))
         t += float(beats_per_chord)
-    return _player.play(events, _bpm(bridge, bpm), channel)
+    return _player.play(_maybe_humanize(events, humanize), _bpm(bridge, bpm), channel)
 
 
 def play_melody(bridge: FLBridge, notes: list, bpm: float | None = None,
-                channel: int = 0) -> str:
+                channel: int = 0, humanize: float = 0.0) -> str:
     """notes as [name, beats] pairs played in sequence, e.g. [['C4',1],['E4',0.5]].
     Use 'rest' (or '') as the name for a rest."""
     events = []
@@ -157,13 +168,104 @@ def play_melody(bridge: FLBridge, notes: list, bpm: float | None = None,
         if name and name.lower() != "rest":
             events.append((theory.note_num(name), t, beats, 95))
         t += beats
-    return _player.play(events, _bpm(bridge, bpm), channel)
+    return _player.play(_maybe_humanize(events, humanize), _bpm(bridge, bpm), channel)
 
 
 def play_drums(bridge: FLBridge, pattern: str, bars: int = 1,
-               bpm: float | None = None, channel: int = 0) -> str:
-    events = theory.drum_events(pattern, int(bars))
-    return _player.play(events, _bpm(bridge, bpm), channel)
+               bpm: float | None = None, channel: int = 0,
+               fill: bool = False, humanize: float = 0.0) -> str:
+    events = theory.drum_events(pattern, int(bars), fill=bool(fill))
+    return _player.play(_maybe_humanize(events, humanize), _bpm(bridge, bpm), channel)
+
+
+def play_bassline(bridge: FLBridge, key: str, chords: list, minor: bool = False,
+                  octave: int = 2, beats_per_chord: float = 2.0, style: str = "root",
+                  bpm: float | None = None, channel: int = 0, humanize: float = 0.0) -> str:
+    """PLAY a bassline that follows a chord progression. style: root (held root) |
+    eighths (driving repeated roots) | octave (root/octave bounce) | walking (root-
+    third-fifth-octave). chords like play_progression. octave 2 = a typical bass register."""
+    events = []
+    t = 0.0
+    bpc = float(beats_per_chord)
+    for c in chords:
+        root, qual = _resolve_chord(key, c, minor, octave)
+        notes = theory.chord_notes(root, qual, octave)
+        base = notes[0]
+        if style == "eighths":
+            for k in range(max(1, int(bpc / 0.5))):
+                events.append((base, t + k * 0.5, 0.45, 92))
+        elif style == "octave":
+            for k in range(max(1, int(bpc / 0.5))):
+                events.append((base if k % 2 == 0 else base + 12, t + k * 0.5, 0.45, 92))
+        elif style == "walking":
+            tones = [notes[0], notes[min(1, len(notes) - 1)],
+                     notes[min(2, len(notes) - 1)], base + 12]
+            step = bpc / 4.0
+            for k in range(4):
+                events.append((tones[k], t + k * step, step * 0.9, 90))
+        else:  # root
+            events.append((base, t, bpc * 0.95, 92))
+        t += bpc
+    return _player.play(_maybe_humanize(events, humanize), _bpm(bridge, bpm), channel)
+
+
+def play_arpeggio(bridge: FLBridge, root: str, quality: str = "min7", octave: int = 4,
+                  direction: str = "up", note_beats: float = 0.25, repeats: int = 4,
+                  bpm: float | None = None, channel: int = 0, humanize: float = 0.0) -> str:
+    """PLAY a chord as an arpeggio (one note at a time). direction: up | down | updown.
+    note_beats = length of each note (0.25 = sixteenths). repeats = how many cycles."""
+    notes = theory.chord_notes(root, quality, octave)
+    if direction == "down":
+        seq = list(reversed(notes))
+    elif direction == "updown" and len(notes) > 2:
+        seq = notes + list(reversed(notes[1:-1]))
+    else:
+        seq = notes
+    events = []
+    t = 0.0
+    nb = float(note_beats)
+    for _ in range(int(repeats)):
+        for p in seq:
+            events.append((p, t, nb * 0.9, 92))
+            t += nb
+    return _player.play(_maybe_humanize(events, humanize), _bpm(bridge, bpm), channel)
+
+
+def play_song(bridge: FLBridge, sections: list, bpm: float | None = None,
+              channel: int = 0, humanize: float = 0.0) -> str:
+    """PLAY a multi-section arrangement back to back on one part — lay down a whole
+    structure (intro/verse/chorus) in a single take. Each section is an object:
+      {"chords": ["i","iv","v","i"], "key":"A", "minor":true, "beats_per_chord":2, "repeat":2}
+      {"drums": "boom_bap", "bars": 4, "fill": true}
+      {"melody": [["C4",1],["E4",1]]}
+    Sections play in order; 'repeat' loops a section. Arm recording first."""
+    events = []
+    t = 0.0
+    for sec in sections:
+        for _ in range(int(sec.get("repeat", 1))):
+            if "chords" in sec:
+                key = sec.get("key", "C")
+                minor = bool(sec.get("minor", False))
+                octv = int(sec.get("octave", 4))
+                bpc = float(sec.get("beats_per_chord", 2.0))
+                for c in sec["chords"]:
+                    root, qual = _resolve_chord(key, c, minor, octv)
+                    events += theory.chord_events(theory.chord_notes(root, qual, octv), t, bpc)
+                    t += bpc
+            elif "drums" in sec:
+                bars = int(sec.get("bars", 1))
+                de = theory.drum_events(sec["drums"], bars, fill=bool(sec.get("fill", False)))
+                events += [(p, t + s, d, v) for (p, s, d, v) in de]
+                t += bars * 4.0
+            elif "melody" in sec:
+                for item in sec["melody"]:
+                    name, beats = item[0], float(item[1])
+                    if name and name.lower() != "rest":
+                        events.append((theory.note_num(name), t, beats, 95))
+                    t += beats
+    if not events:
+        return "Empty song — no sections produced notes."
+    return _player.play(_maybe_humanize(events, humanize), _bpm(bridge, bpm), channel)
 
 
 # --- Mixing assistant --------------------------------------------------------
@@ -245,6 +347,9 @@ _HANDLERS = {
     "play_progression": play_progression,
     "play_melody": play_melody,
     "play_drums": play_drums,
+    "play_bassline": play_bassline,
+    "play_arpeggio": play_arpeggio,
+    "play_song": play_song,
     "read_levels": read_levels,
     "auto_balance": auto_balance,
 }
@@ -314,29 +419,54 @@ TOOLS = [
          "root": {"type": "string"}, "name": {"type": "string"}, "octave": {"type": "integer"}},
       "required": ["root"]}},
     {"name": "play_chord",
-     "description": "PLAY a chord into FL (arm recording on a channel first). quality e.g. min7. beats = how long to hold.",
+     "description": "PLAY a chord into FL (arm recording on a channel first). quality e.g. min7. beats = how long to hold. humanize 0..1 loosens timing/velocity.",
      "input_schema": {"type": "object", "properties": {
          "root": {"type": "string"}, "quality": {"type": "string"}, "octave": {"type": "integer"},
-         "beats": {"type": "number"}, "bpm": {"type": "number"}, "channel": {"type": "integer"}},
+         "beats": {"type": "number"}, "bpm": {"type": "number"}, "channel": {"type": "integer"},
+         "humanize": {"type": "number"}},
       "required": ["root"]}},
     {"name": "play_progression",
-     "description": "PLAY a chord progression. chords = roman numerals like ['i','iv','v','i'] in the given key (set minor=true for a minor key), or [root,quality] pairs like [['F','min7'],['Bb','maj7']]. Arm recording first.",
+     "description": "PLAY a chord progression. chords = roman numerals like ['i','iv','v','i'] in the given key (set minor=true for a minor key), or [root,quality] pairs like [['F','min7'],['Bb','maj7']]. humanize 0..1 for a human feel. Arm recording first.",
      "input_schema": {"type": "object", "properties": {
          "key": {"type": "string"}, "chords": {"type": "array"},
          "minor": {"type": "boolean"}, "octave": {"type": "integer"},
-         "beats_per_chord": {"type": "number"}, "bpm": {"type": "number"}, "channel": {"type": "integer"}},
+         "beats_per_chord": {"type": "number"}, "bpm": {"type": "number"}, "channel": {"type": "integer"},
+         "humanize": {"type": "number"}},
       "required": ["key", "chords"]}},
     {"name": "play_melody",
-     "description": "PLAY a melody. notes = [name, beats] pairs in sequence, e.g. [['C4',1],['E4',0.5],['rest',0.5],['G4',1]]. Use 'rest' for silence. Arm recording first.",
+     "description": "PLAY a melody. notes = [name, beats] pairs in sequence, e.g. [['C4',1],['E4',0.5],['rest',0.5],['G4',1]]. Use 'rest' for silence. humanize 0..1 optional. Arm recording first.",
      "input_schema": {"type": "object", "properties": {
-         "notes": {"type": "array"}, "bpm": {"type": "number"}, "channel": {"type": "integer"}},
+         "notes": {"type": "array"}, "bpm": {"type": "number"}, "channel": {"type": "integer"},
+         "humanize": {"type": "number"}},
       "required": ["notes"]}},
     {"name": "play_drums",
-     "description": "PLAY a drum pattern via MIDI (boom_bap, trap, house, rock) for N bars. Arm recording on a drum channel first.",
+     "description": "PLAY a drum pattern via MIDI (boom_bap, trap, house, rock, funk, dnb, afrobeat) for N bars. fill=true adds a snare build on the last bar. humanize 0..1 for swing/feel. Arm recording on a drum channel first.",
      "input_schema": {"type": "object", "properties": {
          "pattern": {"type": "string"}, "bars": {"type": "integer"},
-         "bpm": {"type": "number"}, "channel": {"type": "integer"}},
+         "bpm": {"type": "number"}, "channel": {"type": "integer"},
+         "fill": {"type": "boolean"}, "humanize": {"type": "number"}},
       "required": ["pattern"]}},
+    {"name": "play_bassline",
+     "description": "PLAY a bassline that follows a chord progression. style: root | eighths | octave | walking. chords like play_progression. octave 2 ~ bass register. humanize 0..1. Arm a bass channel first.",
+     "input_schema": {"type": "object", "properties": {
+         "key": {"type": "string"}, "chords": {"type": "array"}, "minor": {"type": "boolean"},
+         "octave": {"type": "integer"}, "beats_per_chord": {"type": "number"},
+         "style": {"type": "string"}, "bpm": {"type": "number"}, "channel": {"type": "integer"},
+         "humanize": {"type": "number"}},
+      "required": ["key", "chords"]}},
+    {"name": "play_arpeggio",
+     "description": "PLAY a chord as an arpeggio (one note at a time). direction: up|down|updown. note_beats = each note's length (0.25 = sixteenths). repeats = cycles. humanize 0..1. Arm recording first.",
+     "input_schema": {"type": "object", "properties": {
+         "root": {"type": "string"}, "quality": {"type": "string"}, "octave": {"type": "integer"},
+         "direction": {"type": "string"}, "note_beats": {"type": "number"}, "repeats": {"type": "integer"},
+         "bpm": {"type": "number"}, "channel": {"type": "integer"}, "humanize": {"type": "number"}},
+      "required": ["root"]}},
+    {"name": "play_song",
+     "description": "PLAY a multi-section arrangement back to back on one part — lay down a whole structure in one take. sections = list of objects like {\"chords\":[\"i\",\"iv\"],\"key\":\"A\",\"minor\":true,\"beats_per_chord\":2,\"repeat\":2}, {\"drums\":\"boom_bap\",\"bars\":4,\"fill\":true}, or {\"melody\":[[\"C4\",1]]}. Arm recording first.",
+     "input_schema": {"type": "object", "properties": {
+         "sections": {"type": "array"}, "bpm": {"type": "number"}, "channel": {"type": "integer"},
+         "humanize": {"type": "number"}},
+      "required": ["sections"]}},
     {"name": "read_levels",
      "description": "Sample mixer peak levels (dBFS) and current volumes over a few seconds — for mixing. Start playback first so there's signal, then read this to decide gain moves.",
      "input_schema": {"type": "object", "properties": {"seconds": {"type": "number"}}, "required": []}},

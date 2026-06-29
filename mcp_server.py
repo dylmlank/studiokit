@@ -108,30 +108,58 @@ def get_scale(root: str, name: str = "major", octave: int = 4) -> str:
 
 
 @mcp.tool()
-def play_chord(root: str, quality: str = "maj", octave: int = 4,
-               beats: float = 2.0, bpm: float = 0, channel: int = 0) -> str:
+def play_chord(root: str, quality: str = "maj", octave: int = 4, beats: float = 2.0,
+               bpm: float = 0, channel: int = 0, humanize: float = 0.0) -> str:
     """PLAY a chord into FL (arm recording first). bpm=0 uses the project tempo."""
-    return T.play_chord(bridge, root, quality, octave, beats, bpm or None, channel)
+    return T.play_chord(bridge, root, quality, octave, beats, bpm or None, channel, humanize)
 
 
 @mcp.tool()
 def play_progression(key: str, chords: list, minor: bool = False, octave: int = 4,
-                     beats_per_chord: float = 2.0, bpm: float = 0, channel: int = 0) -> str:
+                     beats_per_chord: float = 2.0, bpm: float = 0, channel: int = 0,
+                     humanize: float = 0.0) -> str:
     """PLAY a chord progression — roman numerals (['i','iv','v','i']) or [root,quality] pairs."""
     return T.play_progression(bridge, key, chords, minor, octave, beats_per_chord,
-                              bpm or None, channel)
+                              bpm or None, channel, humanize)
 
 
 @mcp.tool()
-def play_melody(notes: list, bpm: float = 0, channel: int = 0) -> str:
+def play_melody(notes: list, bpm: float = 0, channel: int = 0, humanize: float = 0.0) -> str:
     """PLAY a melody — [name, beats] pairs, e.g. [['C4',1],['E4',0.5]] ('rest' = silence)."""
-    return T.play_melody(bridge, notes, bpm or None, channel)
+    return T.play_melody(bridge, notes, bpm or None, channel, humanize)
 
 
 @mcp.tool()
-def play_drums(pattern: str, bars: int = 1, bpm: float = 0, channel: int = 0) -> str:
-    """PLAY a drum pattern (boom_bap, trap, house, rock) for N bars. Arm recording first."""
-    return T.play_drums(bridge, pattern, bars, bpm or None, channel)
+def play_drums(pattern: str, bars: int = 1, bpm: float = 0, channel: int = 0,
+               fill: bool = False, humanize: float = 0.0) -> str:
+    """PLAY a drum pattern (boom_bap, trap, house, rock, funk, dnb, afrobeat) for N bars."""
+    return T.play_drums(bridge, pattern, bars, bpm or None, channel, fill, humanize)
+
+
+@mcp.tool()
+def play_bassline(key: str, chords: list, minor: bool = False, octave: int = 2,
+                  beats_per_chord: float = 2.0, style: str = "root", bpm: float = 0,
+                  channel: int = 0, humanize: float = 0.0) -> str:
+    """PLAY a bassline following a progression. style: root|eighths|octave|walking."""
+    return T.play_bassline(bridge, key, chords, minor, octave, beats_per_chord,
+                           style, bpm or None, channel, humanize)
+
+
+@mcp.tool()
+def play_arpeggio(root: str, quality: str = "min7", octave: int = 4, direction: str = "up",
+                  note_beats: float = 0.25, repeats: int = 4, bpm: float = 0,
+                  channel: int = 0, humanize: float = 0.0) -> str:
+    """PLAY a chord as an arpeggio. direction: up|down|updown. note_beats 0.25 = 16ths."""
+    return T.play_arpeggio(bridge, root, quality, octave, direction, note_beats,
+                           repeats, bpm or None, channel, humanize)
+
+
+@mcp.tool()
+def play_song(sections: list, bpm: float = 0, channel: int = 0, humanize: float = 0.0) -> str:
+    """PLAY a multi-section arrangement (intro/verse/chorus) back to back in one take.
+    Each section: {"chords":[...],"key":..,"minor":..,"beats_per_chord":..,"repeat":..},
+    {"drums":"boom_bap","bars":4,"fill":true}, or {"melody":[["C4",1]]}."""
+    return T.play_song(bridge, sections, bpm or None, channel, humanize)
 
 
 @mcp.tool()

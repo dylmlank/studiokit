@@ -6,6 +6,8 @@ chords, progressions, melodies, and drum patterns into a record-armed FL channel
 """
 from __future__ import annotations
 
+import random as _random
+
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 _ALIAS = {"DB": "C#", "EB": "D#", "GB": "F#", "AB": "G#", "BB": "A#"}
 
@@ -44,6 +46,12 @@ DRUM_PATTERNS = {
               "open_hat": [2, 6, 10, 14]},
     "rock": {"kick": [0, 8], "snare": [4, 12],
              "hat": [0, 2, 4, 6, 8, 10, 12, 14]},
+    "funk": {"kick": [0, 3, 6, 10], "snare": [4, 12],
+             "hat": [0, 2, 4, 6, 8, 10, 12, 14], "open_hat": [7, 15]},
+    "dnb": {"kick": [0, 10], "snare": [4, 12],
+            "hat": [0, 2, 4, 6, 8, 10, 12, 14]},
+    "afrobeat": {"kick": [0, 6, 8, 14], "rim": [2, 10],
+                 "hat": list(range(16))},
 }
 
 # Diatonic triad qualities by scale degree (major / natural minor).
@@ -104,8 +112,10 @@ def chord_events(pitches: list[int], start: float, dur: float,
     return [(p, start, dur, vel) for p in pitches]
 
 
-def drum_events(pattern: str, bars: int = 1, vel: int = 100) -> list[tuple]:
-    """16-step pattern -> events. Each step = 0.25 beat (16 per bar)."""
+def drum_events(pattern: str, bars: int = 1, vel: int = 100,
+                fill: bool = False) -> list[tuple]:
+    """16-step pattern -> events. Each step = 0.25 beat (16 per bar). fill=True adds
+    a snare build on the last bar's final beat (a transition into the next section)."""
     pat = DRUM_PATTERNS.get(pattern)
     if pat is None:
         raise ValueError(f"Unknown drum pattern {pattern!r}. "
@@ -116,4 +126,23 @@ def drum_events(pattern: str, bars: int = 1, vel: int = 100) -> list[tuple]:
             note = DRUM[drum]
             for s in steps:
                 events.append((note, (bar * 16 + s) * 0.25, 0.1, vel))
+        if fill and bar == bars - 1:
+            for s in (12, 13, 14, 15):
+                events.append((DRUM["snare"], (bar * 16 + s) * 0.25, 0.1,
+                               min(127, vel + (s - 11) * 6)))
     return events
+
+
+def humanize(events: list[tuple], amount: float = 0.5) -> list[tuple]:
+    """Jitter note start times and velocities for a less robotic, more human feel.
+    amount 0..1 scales the jitter (timing up to ~40ms-equivalent in beats; vel ~22)."""
+    if amount <= 0:
+        return events
+    t_amt = 0.04 * amount
+    v_amt = 22 * amount
+    out = []
+    for (p, start, dur, vel) in events:
+        ns = max(0.0, start + _random.uniform(-t_amt, t_amt))
+        nv = int(max(1, min(127, vel + _random.uniform(-v_amt, v_amt))))
+        out.append((p, ns, dur, nv))
+    return out
