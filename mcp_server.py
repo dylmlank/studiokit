@@ -134,5 +134,17 @@ def play_drums(pattern: str, bars: int = 1, bpm: float = 0, channel: int = 0) ->
     return T.play_drums(bridge, pattern, bars, bpm or None, channel)
 
 
+@mcp.tool()
+def read_levels(seconds: float = 2.0) -> str:
+    """Sample mixer peak levels (dBFS) + volumes for mixing (play audio first)."""
+    return T.read_levels(bridge, seconds)
+
+
+@mcp.tool()
+def auto_balance(target_db: float = -12.0, strength: float = 0.5, seconds: float = 2.0) -> str:
+    """Nudge non-master faders toward target_db based on measured peaks (approximate)."""
+    return T.auto_balance(bridge, target_db, strength, seconds)
+
+
 if __name__ == "__main__":
     mcp.run()

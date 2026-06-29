@@ -7,6 +7,9 @@ handlers are the single source of truth for what StudioKit can do to FL Studio.
 """
 from __future__ import annotations
 
+import math
+import time
+
 from core.bridge import FLBridge
 from core import theory
 from core.midi import MidiPlayer
@@ -163,6 +166,65 @@ def play_drums(bridge: FLBridge, pattern: str, bars: int = 1,
     return _player.play(events, _bpm(bridge, bpm), channel)
 
 
+# --- Mixing assistant --------------------------------------------------------
+
+def _db(amp: float) -> float:
+    return 20.0 * math.log10(max(float(amp), 1e-6))
+
+
+def _sample_peaks(bridge: FLBridge, seconds: float) -> dict:
+    """Hold the max peak (L/R combined) per mixer track over a short window."""
+    peaks: dict[int, float] = {}
+    t0 = time.time()
+    while time.time() - t0 < seconds:
+        for tr in bridge.state().get("mixer", {}).get("tracks", []):
+            i = tr["i"]
+            p = max(tr.get("pl", 0.0), tr.get("pr", 0.0))
+            peaks[i] = max(peaks.get(i, 0.0), p)
+        time.sleep(0.05)
+    return peaks
+
+
+def read_levels(bridge: FLBridge, seconds: float = 2.0) -> str:
+    """Sample mixer peak levels over a few seconds. Play audio first so there's
+    signal. Returns peak dBFS + current volume per track for you to balance."""
+    if not bridge.connected():
+        return "FL Studio not connected."
+    peaks = _sample_peaks(bridge, float(seconds))
+    state = {tr["i"]: tr for tr in bridge.state().get("mixer", {}).get("tracks", [])}
+    lines = []
+    for i in sorted(peaks):
+        tr = state.get(i, {})
+        pk = peaks[i]
+        flag = "  CLIP!" if pk >= 1.0 else ("  (silent)" if pk < 1e-4 else "")
+        lines.append(f"  [{i}] {tr.get('n') or '-':<14} peak={_db(pk):6.1f} dBFS  "
+                     f"vol={tr.get('v')}{flag}")
+    return "Levels (peak over %.1fs):\n" % seconds + "\n".join(lines)
+
+
+def auto_balance(bridge: FLBridge, target_db: float = -12.0, strength: float = 0.5,
+                 seconds: float = 2.0) -> str:
+    """Nudge each non-master track's fader toward target_db based on its measured
+    peak. Approximate (FL's fader curve isn't linear) and damped by `strength` —
+    run a couple of times, or use read_levels and set_track_volume for precision."""
+    if not bridge.connected():
+        return "FL Studio not connected."
+    peaks = _sample_peaks(bridge, float(seconds))
+    state = {tr["i"]: tr for tr in bridge.state().get("mixer", {}).get("tracks", [])}
+    moved = []
+    for i, pk in sorted(peaks.items()):
+        if i == 0 or pk < 1e-3:  # skip master and silent tracks
+            continue
+        cur_vol = float(state.get(i, {}).get("v", 0.8))
+        factor = 10 ** ((target_db - _db(pk)) / 20.0 * float(strength))
+        new_vol = max(0.0, min(1.0, cur_vol * factor))
+        bridge.send("set_mixer_volume", track=i, value=new_vol)
+        moved.append(f"[{i}] {cur_vol:.3f}->{new_vol:.3f}")
+    if not moved:
+        return "Nothing to balance (no signal — play audio first)."
+    return f"Nudged toward {target_db} dBFS: " + ", ".join(moved)
+
+
 # name -> handler
 _HANDLERS = {
     "get_status": get_status,
@@ -183,6 +245,8 @@ _HANDLERS = {
     "play_progression": play_progression,
     "play_melody": play_melody,
     "play_drums": play_drums,
+    "read_levels": read_levels,
+    "auto_balance": auto_balance,
 }
 
 # JSON-schema specs for Claude's tool-use API. Kept next to the handlers so the
@@ -273,6 +337,14 @@ TOOLS = [
          "pattern": {"type": "string"}, "bars": {"type": "integer"},
          "bpm": {"type": "number"}, "channel": {"type": "integer"}},
       "required": ["pattern"]}},
+    {"name": "read_levels",
+     "description": "Sample mixer peak levels (dBFS) and current volumes over a few seconds — for mixing. Start playback first so there's signal, then read this to decide gain moves.",
+     "input_schema": {"type": "object", "properties": {"seconds": {"type": "number"}}, "required": []}},
+    {"name": "auto_balance",
+     "description": "Nudge each non-master track's fader toward target_db (default -12 dBFS) based on measured peaks. Approximate + damped; run while audio plays. For precise control use read_levels + set_track_volume.",
+     "input_schema": {"type": "object", "properties": {
+         "target_db": {"type": "number"}, "strength": {"type": "number"}, "seconds": {"type": "number"}},
+      "required": []}},
 ]
 
 

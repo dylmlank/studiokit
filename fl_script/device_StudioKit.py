@@ -81,6 +81,7 @@ def _build_state():
     count = min(mixer.trackCount(), MAX_TRACKS)
     for i in range(count):
         name, vol, pan, muted = "", 0.0, 0.0, False
+        pk_l, pk_r = 0.0, 0.0
         try:
             name = mixer.getTrackName(i)
         except Exception:
@@ -97,8 +98,14 @@ def _build_state():
             muted = mixer.isTrackMuted(i)
         except Exception:
             pass
+        try:
+            pk_l = mixer.getTrackPeaks(i, 0)
+            pk_r = mixer.getTrackPeaks(i, 1)
+        except Exception:
+            pass
         tracks.append({"i": i, "n": name, "v": round(vol, 4),
-                       "p": round(pan, 4), "m": muted})
+                       "p": round(pan, 4), "m": muted,
+                       "pl": round(pk_l, 4), "pr": round(pk_r, 4)})
 
     t_playing = t_recording = False
     t_bpm, t_pos = 120.0, 0.0
