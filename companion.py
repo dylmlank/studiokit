@@ -17,12 +17,20 @@ from __future__ import annotations
 
 import os
 import queue
+import sys
 import threading
 from pathlib import Path
 
 
+def _app_dir() -> Path:
+    """Folder the program lives in (next to the .exe when frozen)."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).parent
+    return Path(__file__).parent
+
+
 def _load_env():
-    env = Path(__file__).parent / ".env"
+    env = _app_dir() / ".env"
     if env.exists():
         for line in env.read_text(encoding="utf-8").splitlines():
             line = line.strip()
@@ -151,7 +159,39 @@ class App:
         threading.Thread(target=worker, daemon=True).start()
 
 
+def _selftest():
+    """Verify a frozen build can load everything it needs, then exit. Writes
+    selftest.json next to the program. Run as: StudioKit.exe --selftest"""
+    import json
+    result = {"app": "StudioKit", "frozen": bool(getattr(sys, "frozen", False))}
+    try:
+        import anthropic
+        anthropic.Anthropic(api_key="selftest")
+        result["anthropic"] = anthropic.__version__
+    except Exception as e:
+        result["anthropic"] = f"FAIL: {e}"
+    try:
+        import mido
+        mido.get_output_names()
+        result["midi"] = "ok"
+    except Exception as e:
+        result["midi"] = f"FAIL: {e}"
+    try:
+        root = tk.Tk()
+        App(root)
+        root.update()
+        root.destroy()
+        result["ui"] = "ok"
+    except Exception as e:
+        result["ui"] = f"FAIL: {e}"
+    (_app_dir() / "selftest.json").write_text(json.dumps(result), encoding="utf-8")
+    print(json.dumps(result))
+
+
 def main():
+    if "--selftest" in sys.argv:
+        _selftest()
+        return
     root = tk.Tk()
     App(root)
     root.mainloop()

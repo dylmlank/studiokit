@@ -8,6 +8,12 @@ venv/
 .env
 *.local
 
+# Built program + build artifacts
+*.exe
+selftest.json
+build/
+*.spec
+
 # Editor / OS
 .vscode/
 .DS_Store
