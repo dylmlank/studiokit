@@ -12,5 +12,6 @@ CMD_PORT = int(os.environ.get("STUDIOKIT_CMD_PORT", "9501"))      # us -> FL
 # with loopMIDI; StudioKit plays chords/melodies/drums into it for FL to record.
 MIDI_PORT = os.environ.get("STUDIOKIT_MIDI_PORT", "loopMIDI")
 
-# Claude model for the standalone agent (claude-opus-4-8 is the latest Opus).
+# Generation uses the native Anthropic API with claude-opus-4-8.
+# Requires ANTHROPIC_API_KEY in .env
 MODEL = os.environ.get("STUDIOKIT_MODEL", "claude-opus-4-8")

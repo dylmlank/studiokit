@@ -1,22 +1,37 @@
-"""StudioKit standalone agent — talk to Claude in your terminal and it drives
+r"""StudioKit standalone agent — talk to a model in your terminal and it drives
 FL Studio through the same tools the MCP server exposes.
 
-    set ANTHROPIC_API_KEY=...        (Windows: setx, or a .env loaded by your shell)
+    # in E:\studiokit\.env (or the environment):
+    #   ANTHROPIC_API_KEY=sk-ant-...
+    #   STUDIOKIT_MODEL=claude-opus-4-8             (optional; default is claude-opus-4-8)
     python agent.py                  # interactive
     python agent.py "make a 90 BPM boom-bap beat on channels 0 and 1"
 
-Uses the Anthropic SDK manual tool-use loop with claude-opus-4-8 and adaptive
-thinking. The tool set comes from core.tools.TOOLS; results are dispatched via
-core.tools.dispatch — one definition, shared with mcp_server.py.
+Generation runs through the native Anthropic API (core.llm). The tool
+set comes from core.tools.TOOLS; results are dispatched via core.tools.dispatch —
+one definition, shared with mcp_server.py.
 """
 from __future__ import annotations
 
+import os
 import sys
+from pathlib import Path
 
-import anthropic
 
-from config import MODEL
-from core import FLBridge, TOOLS, dispatch
+def _load_env() -> None:
+    env = Path(__file__).parent / ".env"
+    if env.exists():
+        for line in env.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+
+
+_load_env()
+
+from core import FLBridge, TOOLS, dispatch  # noqa: E402
+from core.llm import make_client, run_loop  # noqa: E402
 
 SYSTEM = (
     "You are StudioKit, a music production assistant wired directly into the user's "
@@ -29,44 +44,18 @@ SYSTEM = (
 )
 
 
-def run(bridge: FLBridge, client: anthropic.Anthropic, user_text: str,
-        history: list) -> list:
-    history.append({"role": "user", "content": user_text})
-    while True:
-        resp = client.messages.create(
-            model=MODEL,
-            max_tokens=4096,
-            thinking={"type": "adaptive"},
-            system=SYSTEM,
-            tools=TOOLS,
-            messages=history,
-        )
-        history.append({"role": "assistant", "content": resp.content})
-
-        for block in resp.content:
-            if block.type == "text" and block.text.strip():
-                print(f"\n{block.text.strip()}\n")
-
-        if resp.stop_reason != "tool_use":
-            return history
-
-        results = []
-        for block in resp.content:
-            if block.type == "tool_use":
-                out = dispatch(bridge, block.name, block.input)
-                print(f"  · {block.name}({block.input}) -> {out}")
-                results.append({"type": "tool_result", "tool_use_id": block.id,
-                                "content": out})
-        history.append({"role": "user", "content": results})
-
-
 def main() -> int:
     bridge = FLBridge()
-    client = anthropic.Anthropic()
+    client = make_client()
     history: list = []
 
+    def drive(text: str) -> None:
+        history.append({"role": "user", "content": text})
+        run_loop(client, TOOLS, lambda n, a: dispatch(bridge, n, a),
+                 SYSTEM, history, print, max_tokens=4096)
+
     if len(sys.argv) > 1:
-        run(bridge, client, " ".join(sys.argv[1:]), history)
+        drive(" ".join(sys.argv[1:]))
         return 0
 
     print("StudioKit agent — describe what you want in FL Studio (Ctrl+C to quit).")
@@ -74,7 +63,7 @@ def main() -> int:
         while True:
             text = input("\n> ").strip()
             if text:
-                run(bridge, client, text, history)
+                drive(text)
     except (KeyboardInterrupt, EOFError):
         print("\nbye")
         return 0

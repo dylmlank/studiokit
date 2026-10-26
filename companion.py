@@ -9,7 +9,7 @@ with some humanize", hit Send, and Claude controls FL through StudioKit's tools
 Run it:
     uv run --python 3.12 --with anthropic --with mido --with python-rtmidi python companion.py
 
-API key: set ANTHROPIC_API_KEY, or put it in `E:\studiokit\.env` as
+API key: put your Anthropic key in `E:\studiokit\.env` as
     ANTHROPIC_API_KEY=sk-ant-...
 The window opens either way and tells you if the key (or FL) isn't connected.
 """
@@ -44,8 +44,8 @@ _load_env()
 import tkinter as tk  # noqa: E402
 from tkinter import scrolledtext  # noqa: E402
 
-from config import MODEL  # noqa: E402
 from core import FLBridge, TOOLS, dispatch  # noqa: E402
+from core.llm import make_client, run_loop  # noqa: E402
 
 SYSTEM = (
     "You are StudioKit, wired into the user's live FL Studio session. Control tempo, "
@@ -58,26 +58,10 @@ SYSTEM = (
 
 
 def run_agent(bridge, prompt: str, log) -> None:
-    import anthropic
-    client = anthropic.Anthropic()
+    client = make_client()
     messages = [{"role": "user", "content": prompt}]
-    while True:
-        resp = client.messages.create(
-            model=MODEL, max_tokens=4096, thinking={"type": "adaptive"},
-            system=SYSTEM, tools=TOOLS, messages=messages)
-        messages.append({"role": "assistant", "content": resp.content})
-        for b in resp.content:
-            if b.type == "text" and b.text.strip():
-                log(b.text.strip())
-        if resp.stop_reason != "tool_use":
-            return
-        results = []
-        for b in resp.content:
-            if b.type == "tool_use":
-                out = dispatch(bridge, b.name, b.input)
-                log(f"  · {b.name} -> {str(out)[:160]}")
-                results.append({"type": "tool_result", "tool_use_id": b.id, "content": str(out)})
-        messages.append({"role": "user", "content": results})
+    run_loop(client, TOOLS, lambda n, a: dispatch(bridge, n, a),
+             SYSTEM, messages, log, max_tokens=4096)
 
 
 class App:
@@ -89,11 +73,12 @@ class App:
         root.geometry("520x500")
         root.attributes("-topmost", True)
 
-        self.have_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
+        self.have_key = bool(os.environ.get("OPENROUTER_API_KEY")
+                             or os.environ.get("ANTHROPIC_API_KEY"))
         if not self.have_key:
             tk.Label(root, bg="#7a1f1f", fg="white", anchor="w",
-                     text=(" No ANTHROPIC_API_KEY. Add it to E:\\studiokit\\.env "
-                           "(ANTHROPIC_API_KEY=sk-ant-...) and reopen.")).pack(fill="x")
+                     text=(" No OpenRouter key. Add OPENROUTER_API_KEY=sk-or-v1-... to "
+                           "E:\\studiokit\\.env (and set STUDIOKIT_MODEL) and reopen.")).pack(fill="x")
 
         self.status = tk.Label(root, anchor="w", fg="#555",
                                text="Checking FL Studio connection…")
@@ -139,7 +124,7 @@ class App:
 
     def send(self):
         if not self.have_key:
-            self.log("Add your API key to E:\\studiokit\\.env first.")
+            self.log("Add OPENROUTER_API_KEY to E:\\studiokit\\.env first.")
             return
         prompt = self.prompt.get("1.0", "end").strip()
         if not prompt:
